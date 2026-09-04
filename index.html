@@ -78,7 +78,7 @@
     }
     
     canvas {
-      max-width: 85vw;
+      max-width: 80vw;
       max-height: 70vh;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -88,6 +88,50 @@
     canvas.draggable {
       cursor: move;
     }
+
+    /* Боковая панель с подсказками по клавишам */
+    .hotkeys-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #ffffff;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      width: 210px;
+      font-size: 13px;
+      color: #444;
+      z-index: 100;
+    }
+    .hotkeys-panel h4 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: #111;
+      border-bottom: 2px solid #f0f0f0;
+      padding-bottom: 6px;
+    }
+    .hotkey-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .hotkey-row:last-child {
+      margin-bottom: 0;
+    }
+    kbd {
+      background-color: #f7f7f7;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+      color: #333;
+      display: inline-block;
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: bold;
+      padding: 2px 6px;
+    }
   </style>
 </head>
 <body>
@@ -96,13 +140,11 @@
     <button class="btn btn-upload" onclick="document.getElementById('file-input').click()">Загрузить фото</button>
     <input type="file" id="file-input" accept="image/*">
 
-    <!-- Зумирование -->
     <div class="zoom-group">
       <label for="zoom-range">Масштаб:</label>
       <input type="range" id="zoom-range" min="0.5" max="3" step="0.05" value="1" disabled>
     </div>
 
-    <!-- Поле ввода порядкового номера -->
     <div class="counter-group">
       <label for="photo-number">№ фото:</label>
       <input type="number" id="photo-number" value="1" min="1">
@@ -114,6 +156,27 @@
 
   <div class="drop-zone" id="drop-zone">
     <canvas id="canvas"></canvas>
+  </div>
+
+  <!-- Боковой блок подсказок -->
+  <div class="hotkeys-panel">
+    <h4>Горячие клавиши</h4>
+    <div class="hotkey-row">
+      <span>Сохранить:</span>
+      <div><kbd>Enter</kbd> / <kbd>Ctrl+S</kbd></div>
+    </div>
+    <div class="hotkey-row">
+      <span>Сбросить:</span>
+      <div><kbd>Esc</kbd> / <kbd>Del</kbd></div>
+    </div>
+    <div class="hotkey-row">
+      <span>Масштаб:</span>
+      <div><kbd>Колесо мыши</kbd></div>
+    </div>
+    <div class="hotkey-row">
+      <span>Переместить:</span>
+      <div><kbd>Зажать ЛКМ</kbd></div>
+    </div>
   </div>
 
   <script>
@@ -133,7 +196,6 @@
     let maskBounds = null;
     let currentUserImg = null;
 
-    // Состояние трансформации загруженного фото
     let scale = 1;
     let offsetX = 0;
     let offsetY = 0;
@@ -141,7 +203,6 @@
     let startX = 0;
     let startY = 0;
 
-    // Восстановление сохраненного номера при запуске
     const savedCounter = localStorage.getItem('photo_counter');
     if (savedCounter) photoNumberInput.value = savedCounter;
 
@@ -204,15 +265,11 @@
     function drawCanvas() {
       if (!bgImg.complete || bgImg.width === 0) return;
 
-      // 1. Фон
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(bgImg, 0, 0);
 
-      // 2. Фото пользователя с возможностью масштабирования и перемещения
       if (currentUserImg && maskBounds) {
         ctx.save();
-        
-        // Обрезаем область рисования по рамке маски
         ctx.beginPath();
         ctx.rect(maskBounds.x, maskBounds.y, maskBounds.w, maskBounds.h);
         ctx.clip();
@@ -232,7 +289,6 @@
         const renderW = baseW * scale;
         const renderH = baseH * scale;
 
-        // Вычисляем центр плюс пользовательское смещение
         const centerX = maskBounds.x + maskBounds.w / 2 + offsetX;
         const centerY = maskBounds.y + maskBounds.h / 2 + offsetY;
 
@@ -243,7 +299,6 @@
         ctx.restore();
       }
 
-      // 3. Тень
       if (shadowImg.complete && shadowImg.width > 0) {
         ctx.drawImage(shadowImg, 0, 0, canvas.width, canvas.height);
       }
@@ -257,8 +312,6 @@
         const img = new Image();
         img.onload = () => {
           currentUserImg = img;
-          
-          // Сброс позиционирования под новое фото
           scale = 1;
           offsetX = 0;
           offsetY = 0;
@@ -275,13 +328,21 @@
       reader.readAsDataURL(file);
     }
 
-    // --- Управление масштабированием ---
     zoomRange.addEventListener('input', (e) => {
       scale = parseFloat(e.target.value);
       drawCanvas();
     });
 
-    // --- Управление перетаскиванием (Drag) ---
+    canvas.addEventListener('wheel', (e) => {
+      if (!currentUserImg) return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.05 : -0.05;
+      let newScale = Math.min(Math.max(0.5, scale + delta), 3);
+      scale = newScale;
+      zoomRange.value = newScale;
+      drawCanvas();
+    });
+
     function getCanvasCoords(e) {
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
@@ -310,7 +371,6 @@
 
     window.addEventListener('mouseup', () => { isDragging = false; });
 
-    // Drag & Drop файла
     fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 
     ['dragenter', 'dragover'].forEach(evt => {
@@ -333,7 +393,6 @@
       handleFile(e.dataTransfer.files[0]);
     });
 
-    // --- Сброс / Очистка ---
     function resetApp() {
       currentUserImg = null;
       scale = 1;
@@ -386,6 +445,20 @@
         incrementCounter();
       }
     }
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement === photoNumberInput) return;
+
+      if (e.key === 'Enter' || (e.ctrlKey && e.key.toLowerCase() === 's')) {
+        e.preventDefault();
+        if (currentUserImg) saveImage();
+      }
+
+      if (e.key === 'Escape' || e.key === 'Delete') {
+        e.preventDefault();
+        resetApp();
+      }
+    });
   </script>
 </body>
 </html>
