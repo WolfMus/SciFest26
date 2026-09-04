@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Генератор рамок — Фестиваль Науки 2026</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      margin: 0;
+    }
+    .controls {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .counter-group, .zoom-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+      font-weight: bold;
+      color: #333;
+    }
+    .counter-group input {
+      width: 60px;
+      padding: 4px 6px;
+      font-size: 16px;
+      border: 1px solid #aaa;
+      border-radius: 4px;
+      text-align: center;
+    }
+    .btn {
+      padding: 10px 16px;
+      font-size: 15px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      color: white;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+    .btn-upload { background-color: #007bff; }
+    .btn-upload:hover { background-color: #0056b3; }
+    .btn-reset { background-color: #dc3545; opacity: 0.5; pointer-events: none; }
+    .btn-reset.active { opacity: 1; pointer-events: auto; }
+    .btn-reset:hover { background-color: #bd2130; }
+    .btn-save { background-color: #28a745; opacity: 0.5; pointer-events: none; }
+    .btn-save.active { opacity: 1; pointer-events: auto; }
+    .btn-save:hover { background-color: #1e7e34; }
+    #file-input { display: none; }
+
+    .drop-zone {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border: 3px dashed #ccc;
+      border-radius: 12px;
+      background: #fff;
+      padding: 5px;
+      transition: border-color 0.2s, background-color 0.2s;
+    }
+    .drop-zone.dragover {
+      border-color: #007bff;
+      background-color: #e9f2ff;
+    }
+    
+    canvas {
+      max-width: 85vw;
+      max-height: 70vh;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      display: block;
+      cursor: default;
+    }
+    canvas.draggable {
+      cursor: move;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="controls">
+    <button class="btn btn-upload" onclick="document.getElementById('file-input').click()">Загрузить фото</button>
+    <input type="file" id="file-input" accept="image/*">
+
+    <!-- Зумирование -->
+    <div class="zoom-group">
+      <label for="zoom-range">Масштаб:</label>
+      <input type="range" id="zoom-range" min="0.5" max="3" step="0.05" value="1" disabled>
+    </div>
+
+    <!-- Поле ввода порядкового номера -->
+    <div class="counter-group">
+      <label for="photo-number">№ фото:</label>
+      <input type="number" id="photo-number" value="1" min="1">
+    </div>
+
+    <button id="reset-btn" class="btn btn-reset" onclick="resetApp()">Сбросить</button>
+    <button id="save-btn" class="btn btn-save" onclick="saveImage()">Сохранить результат</button>
+  </div>
+
+  <div class="drop-zone" id="drop-zone">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const fileInput = document.getElementById('file-input');
+    const saveBtn = document.getElementById('save-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const dropZone = document.getElementById('drop-zone');
+    const photoNumberInput = document.getElementById('photo-number');
+    const zoomRange = document.getElementById('zoom-range');
+
+    const bgImg = new Image();
+    const maskImg = new Image();
+    const shadowImg = new Image();
+
+    let maskBounds = null;
+    let currentUserImg = null;
+
+    // Состояние трансформации загруженного фото
+    let scale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    // Восстановление сохраненного номера при запуске
+    const savedCounter = localStorage.getItem('photo_counter');
+    if (savedCounter) photoNumberInput.value = savedCounter;
+
+    photoNumberInput.addEventListener('change', () => {
+      localStorage.setItem('photo_counter', photoNumberInput.value);
+    });
+
+    bgImg.src = 'bg.jpg';
+    maskImg.src = 'mask.png';
+    shadowImg.src = 'shadow.png';
+
+    maskImg.onload = () => {
+      try {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = maskImg.width;
+        tempCanvas.height = maskImg.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(maskImg, 0, 0);
+
+        const imgData = tempCtx.getImageData(0, 0, maskImg.width, maskImg.height).data;
+        let minX = maskImg.width, minY = maskImg.height, maxX = 0, maxY = 0;
+        let found = false;
+
+        for (let y = 0; y < maskImg.height; y++) {
+          for (let x = 0; x < maskImg.width; x++) {
+            const alphaIdx = (y * maskImg.width + x) * 4 + 3;
+            if (imgData[alphaIdx] > 128) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+              found = true;
+            }
+          }
+        }
+
+        if (found) maskBounds = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      } catch (e) {
+        maskBounds = { x: 102, y: 181, w: 796, h: 638 };
+      }
+
+      initCanvasSize();
+      drawCanvas();
+    };
+
+    bgImg.onload = () => {
+      initCanvasSize();
+      drawCanvas();
+    };
+
+    shadowImg.onload = drawCanvas;
+
+    function initCanvasSize() {
+      if (bgImg.complete && bgImg.width > 0) {
+        canvas.width = bgImg.width;
+        canvas.height = bgImg.height;
+      }
+    }
+
+    function drawCanvas() {
+      if (!bgImg.complete || bgImg.width === 0) return;
+
+      // 1. Фон
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bgImg, 0, 0);
+
+      // 2. Фото пользователя с возможностью масштабирования и перемещения
+      if (currentUserImg && maskBounds) {
+        ctx.save();
+        
+        // Обрезаем область рисования по рамке маски
+        ctx.beginPath();
+        ctx.rect(maskBounds.x, maskBounds.y, maskBounds.w, maskBounds.h);
+        ctx.clip();
+
+        const baseRatio = maskBounds.w / maskBounds.h;
+        const imgRatio = currentUserImg.width / currentUserImg.height;
+
+        let baseW, baseH;
+        if (imgRatio > baseRatio) {
+          baseH = maskBounds.h;
+          baseW = maskBounds.h * imgRatio;
+        } else {
+          baseW = maskBounds.w;
+          baseH = maskBounds.w / imgRatio;
+        }
+
+        const renderW = baseW * scale;
+        const renderH = baseH * scale;
+
+        // Вычисляем центр плюс пользовательское смещение
+        const centerX = maskBounds.x + maskBounds.w / 2 + offsetX;
+        const centerY = maskBounds.y + maskBounds.h / 2 + offsetY;
+
+        const drawX = centerX - renderW / 2;
+        const drawY = centerY - renderH / 2;
+
+        ctx.drawImage(currentUserImg, drawX, drawY, renderW, renderH);
+        ctx.restore();
+      }
+
+      // 3. Тень
+      if (shadowImg.complete && shadowImg.width > 0) {
+        ctx.drawImage(shadowImg, 0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    function handleFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          currentUserImg = img;
+          
+          // Сброс позиционирования под новое фото
+          scale = 1;
+          offsetX = 0;
+          offsetY = 0;
+          zoomRange.value = 1;
+          zoomRange.disabled = false;
+
+          canvas.classList.add('draggable');
+          saveBtn.classList.add('active');
+          resetBtn.classList.add('active');
+          drawCanvas();
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // --- Управление масштабированием ---
+    zoomRange.addEventListener('input', (e) => {
+      scale = parseFloat(e.target.value);
+      drawCanvas();
+    });
+
+    // --- Управление перетаскиванием (Drag) ---
+    function getCanvasCoords(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+      };
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (!currentUserImg) return;
+      isDragging = true;
+      const coords = getCanvasCoords(e);
+      startX = coords.x - offsetX;
+      startY = coords.y - offsetY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const coords = getCanvasCoords(e);
+      offsetX = coords.x - startX;
+      offsetY = coords.y - startY;
+      drawCanvas();
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Drag & Drop файла
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    ['dragenter', 'dragover'].forEach(evt => {
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('dragover');
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      handleFile(e.dataTransfer.files[0]);
+    });
+
+    // --- Сброс / Очистка ---
+    function resetApp() {
+      currentUserImg = null;
+      scale = 1;
+      offsetX = 0;
+      offsetY = 0;
+      zoomRange.value = 1;
+      zoomRange.disabled = true;
+      fileInput.value = '';
+
+      canvas.classList.remove('draggable');
+      saveBtn.classList.remove('active');
+      resetBtn.classList.remove('active');
+      drawCanvas();
+    }
+
+    function incrementCounter() {
+      const currentValue = parseInt(photoNumberInput.value, 10) || 1;
+      const nextValue = currentValue + 1;
+      photoNumberInput.value = nextValue;
+      localStorage.setItem('photo_counter', nextValue);
+    }
+
+    async function saveImage() {
+      if (!currentUserImg) return;
+
+      const fileName = (photoNumberInput.value.trim() || '1') + '.png';
+
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }],
+          });
+
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+
+          incrementCounter();
+        } catch (err) {
+          if (err.name !== 'AbortError') console.error(err);
+        }
+      } else {
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+
+        incrementCounter();
+      }
+    }
+  </script>
+</body>
+</html>
